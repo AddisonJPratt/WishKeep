@@ -48,7 +48,7 @@ struct EditNameSheet: View {
 
 #Preview {
     StatefulPreviewWrapper("") { binding in
-        EditNameSheet(name: binding) {}
+        EditNameSheet(name: binding, onSave: {})
     }
 }
 

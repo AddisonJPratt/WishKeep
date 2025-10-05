@@ -6,16 +6,18 @@
 //
 
 import SwiftUI
-import CoreData
+internal import CoreData
 
 @main
 struct WishKeep_V2App: App {
     let persistenceController = PersistenceController.shared
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
         }
     }
 }
+

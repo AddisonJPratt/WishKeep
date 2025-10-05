@@ -3,7 +3,42 @@
     <entity name="Item" representedClassName="Item" syncable="YES" codeGenerationType="class">
         <attribute name="timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
     </entity>
+    <entity name="Note" representedClassName="Note" syncable="YES" codeGenerationType="class">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="imageLocalIdentifier" optional="NO" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="dateCaptured" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="dateImported" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="text" optional="NO" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="textHash" optional="YES" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="thumbnail" optional="YES" attributeType="Binary"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="contactName" optional="YES" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="userEditedContactName" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="isTruncated" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="isLongMessage" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="captureMode" optional="YES" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="coverImageLocalIdentifier" optional="YES" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="threadGroupId" optional="YES" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="isFavorite" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="reflection" optional="YES" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="ocrConfidence" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="lineCount" optional="YES" attributeType="Integer 32" usesScalarValueType="YES"/>
+        <attribute name="isMostlyOneSpeaker" optional="YES" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="userPreferredMode" optional="YES" attributeType="String" usesScalarValueType="NO"/>
+        <relationship name="jars" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Jar" inverseName="notes" inverseEntity="Jar"/>
+    </entity>
+    <entity name="Jar" representedClassName="Jar" syncable="YES" codeGenerationType="class">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" optional="NO" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="icon" optional="YES" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="colorHex" optional="YES" attributeType="String" usesScalarValueType="NO"/>
+        <attribute name="createdAt" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="sortOrder" optional="NO" attributeType="Integer 16" usesScalarValueType="YES"/>
+        <relationship name="notes" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="Note" inverseName="jars" inverseEntity="Note"/>
+    </entity>
     <elements>
         <element name="Item" positionX="-63" positionY="-18" width="128" height="44"/>
+        <element name="Note" positionX="-63" positionY="66" width="128" height="178"/>
+        <element name="Jar" positionX="128" positionY="66" width="128" height="178"/>
     </elements>
 </model>
