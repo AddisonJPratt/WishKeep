@@ -27,6 +27,7 @@ struct JarsView: View {
                 ForEach(jars) { jar in
                     NavigationLink(destination: JarNotesView(selectedJar: jar, filter: .jar(jar))) {
                         HStack {
+                            if let imgName = "Icon_Jar" as String? { JarIcon(size: 18) }
                             Text((jar.icon ?? "") + " " + (jar.name ?? ""))
                             Spacer()
                             Text("\(((jar.notes as? Set<Note>)?.count ?? 0))")

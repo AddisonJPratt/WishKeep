@@ -10,6 +10,7 @@ struct JarPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var newName: String = ""
     @State private var newIcon: String = ""
+    @State private var pickedColor: Color = .blue.opacity(0.5)
     @State private var showCreate: Bool = false
 
     var body: some View {
@@ -45,20 +46,51 @@ struct JarPickerView: View {
     private var createSheet: some View {
         NavigationStack {
             Form {
-                TextField("Emoji", text: $newIcon)
+                HStack {
+                    JarIcon(size: 18)
+                    TextField("Emoji", text: $newIcon)
+                }
                 TextField("Name", text: $newName)
+                VStack(alignment: .leading) {
+                    Text("Color")
+                    HStack {
+                        ForEach(palette, id: \.self) { c in
+                            Circle()
+                                .fill(c)
+                                .frame(width: 28, height: 28)
+                                .overlay(Circle().stroke(Color.primary.opacity(0.1)))
+                                .onTapGesture { pickedColor = c }
+                                .padding(2)
+                        }
+                    }
+                }
             }
             .navigationTitle("New Jar")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        do { _ = try JarStore.shared.create(name: newName, icon: newIcon.isEmpty ? nil : newIcon, colorHex: nil, context: viewContext); showCreate = false }
+                        let hex = pickedColor.toHexString()
+                        do { _ = try JarStore.shared.create(name: newName, icon: newIcon.isEmpty ? nil : newIcon, colorHex: hex, context: viewContext); showCreate = false }
                         catch { }
                     }
                 }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showCreate = false } }
             }
         }
+    }
+    private var palette: [Color] { [.pink.opacity(0.5), .purple.opacity(0.5), .blue.opacity(0.5), .teal.opacity(0.5), .green.opacity(0.5), .orange.opacity(0.5)] }
+}
+
+private extension Color {
+    func toHexString() -> String? {
+        #if canImport(UIKit)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(self).getRed(&r, green: &g, blue: &b, alpha: &a)
+        let ri = Int(r * 255), gi = Int(g * 255), bi = Int(b * 255)
+        return String(format: "#%02X%02X%02X", ri, gi, bi)
+        #else
+        return nil
+        #endif
     }
 }
 

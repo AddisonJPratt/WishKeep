@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import PhotosUI
 internal import CoreData
 
 struct NoteDetailView: View {
@@ -10,6 +11,11 @@ struct NoteDetailView: View {
     @State private var isEditingTranscript: Bool = false
     @State private var transcriptDraft: String = ""
     @State private var showingJarPicker: Bool = false
+    @State private var coverVisible: Bool = false
+    @State private var starBounce: Bool = false
+    @State private var reflectPulse: Bool = false
+    @State private var showPhotoPicker: Bool = false
+    @State private var pickerItem: PhotosPickerItem?
     let note: Note
 
     var body: some View {
@@ -18,12 +24,23 @@ struct NoteDetailView: View {
             contentTabs
         }
         .sheet(isPresented: $showingJarPicker) { JarPickerView(note: note) }
+        .onChange(of: pickerItem) { newItem in
+            guard let item = newItem else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                    note.thumbnail = image.jpegData(compressionQuality: 0.8)
+                    try? viewContext.save()
+                }
+            }
+        }
         .navigationTitle("Note")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: toggleFavorite) {
                     Image(systemName: note.isFavorite ? "star.fill" : "star")
+                        .scaleEffect(starBounce ? 1.2 : 1.0)
+                        .animation(.easeInOut(duration: 0.18), value: starBounce)
                 }
                 .accessibilityLabel(note.isFavorite ? "Remove Favorite" : "Add Favorite")
             }
@@ -62,7 +79,7 @@ struct NoteDetailView: View {
                     .accessibilityLabel("Edit name")
                 Spacer()
             }
-            // Jars chips
+            // Jars chips + Add Image
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     if let set = note.jars as? Set<Jar> {
@@ -82,29 +99,50 @@ struct NoteDetailView: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(Capsule().fill(Color(.tertiarySystemBackground)))
+                    PhotosPicker(selection: $pickerItem, matching: .images, photoLibrary: .shared()) {
+                        Label("Add Image", systemImage: "photo.badge.plus")
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Color(.tertiarySystemBackground)))
+                    }
                 }
                 .padding(.vertical, 4)
             }
             ZStack {
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.gray.opacity(0.15))
-                    .frame(height: 280)
+                    .fill(Theme.Colors.card)
+                    .frame(height: 160)
                 if let data = note.thumbnail, let ui = UIImage(data: data) {
+                    // blurred background
+                    Image(uiImage: ui)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(height: 160)
+                        .blur(radius: 18)
+                        .opacity(0.5)
+                        .clipped()
+                        .cornerRadius(16)
+                    // main image with fade-in
                     Image(uiImage: ui)
                         .resizable()
                         .scaledToFit()
-                        .frame(maxHeight: 260)
+                        .frame(maxHeight: 120)
                         .cornerRadius(12)
+                        .opacity(coverVisible ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.25), value: coverVisible)
                 } else {
                     Image(systemName: "photo")
                         .resizable()
                         .scaledToFit()
-                        .frame(height: 140)
+                        .frame(height: 80)
                         .foregroundStyle(.secondary)
+                        .opacity(coverVisible ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.25), value: coverVisible)
                 }
             }
             .accessibilityLabel("Cover screenshot")
             .padding(.bottom, 8)
+            .onAppear { coverVisible = true }
         }
         .padding(.horizontal)
         .padding(.top)
@@ -120,10 +158,12 @@ struct NoteDetailView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal)
             .onChange(of: selectedTab) { newValue in
+                withAnimation(.easeInOut(duration: 0.2)) { }
                 savePreferredMode(tab: newValue)
             }
 
             Group { selectedContent }
+                .transition(.opacity)
         }
     }
 
@@ -151,11 +191,21 @@ struct NoteDetailView: View {
                 .padding(.horizontal)
                 .padding(.vertical, 6)
             }
-            if isEditingTranscript {
-                TextEditor(text: $transcriptDraft)
-                    .padding()
-            } else {
-                ScrollView { Text(note.text ?? "").textSelection(.enabled).padding(.horizontal) }
+            ScrollView {
+                if isEditingTranscript {
+                    TextEditor(text: $transcriptDraft)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .textInputAutocapitalization(.sentences)
+                } else {
+                    Text(note.text ?? "")
+                        .textSelection(.enabled)
+                        .padding(.horizontal)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .multilineTextAlignment(.leading)
+                        .lineSpacing(6)
+                        .font(.body)
+                }
             }
         }
         .overlay(alignment: .bottomLeading) {
@@ -170,16 +220,29 @@ struct NoteDetailView: View {
     }
 
     private var reflectionView: some View {
-        TextEditor(text: Binding(get: { note.reflection ?? "" }, set: { newValue in
-            note.reflection = newValue
-            try? viewContext.save()
-        }))
-        .padding()
+        ZStack(alignment: .trailing) {
+            TextEditor(text: Binding(get: { note.reflection ?? "" }, set: { newValue in
+                note.reflection = newValue
+                try? viewContext.save()
+                reflectPulse = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { reflectPulse = false }
+            }))
+            .padding()
+            if reflectPulse {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .padding()
+                    .transition(.scale.combined(with: .opacity))
+                    .animation(.easeInOut(duration: 0.2), value: reflectPulse)
+            }
+        }
     }
 
     private func toggleFavorite() {
         note.isFavorite.toggle()
         try? viewContext.save()
+        starBounce = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { starBounce = false }
     }
 
     private func saveName() {

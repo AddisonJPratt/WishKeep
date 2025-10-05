@@ -39,6 +39,7 @@ final class JarStore {
     func add(_ note: Note, to jar: Jar, context: NSManagedObjectContext) {
         jar.addToNotes(note)
         try? context.save()
+        NotificationCenter.default.post(name: .jarAddedPing, object: note.objectID)
     }
 
     func remove(_ note: Note, from jar: Jar, context: NSManagedObjectContext) {
@@ -58,6 +59,10 @@ final class JarStore {
         if let top = try context.fetch(fetch).first { return top.sortOrder }
         return 0
     }
+}
+
+extension Notification.Name {
+    static let jarAddedPing = Notification.Name("JarAddedPing")
 }
 
 extension Note {

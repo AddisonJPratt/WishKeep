@@ -1,5 +1,6 @@
 import SwiftUI
 internal import CoreData
+import UIKit
 
 struct RootView: View {
     @Environment(\.managedObjectContext) private var viewContext
@@ -7,20 +8,25 @@ struct RootView: View {
     #if DEBUG
     @State private var showOCRDebug: Bool = false
     #endif
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var blurPrivacy: Bool = false
 
     var body: some View {
         NavigationStack {
             NoteListView()
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            ClipboardManager.shared.saveClipboardIfAvailable(context: viewContext)
-                        } label: {
-                            Label("Save Clipboard", systemImage: "doc.on.clipboard")
-                        }
-                    }
                     ToolbarItem(placement: .topBarLeading) {
                         NavigationLink(destination: JarsView()) { Label("Jars", systemImage: "tray.full") }
+                    }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button {
+                            if UIPasteboard.general.hasStrings { ClipboardManager.shared.saveClipboardIfAvailable(context: viewContext) }
+                        } label: { Image(systemName: "doc.on.clipboard") }
+                        Button {
+                            ImportService.shared.scanForNewScreenshots(context: viewContext)
+                        } label: {
+                            Image(systemName: "photo.on.rectangle")
+                        }
                     }
                 }
         }
@@ -32,6 +38,7 @@ struct RootView: View {
                     .background(.thinMaterial, in: Capsule())
                     .padding(.top, 12)
                     .transition(.move(edge: .top).combined(with: .opacity))
+                    .shadow(radius: 4)
             }
             #if DEBUG
             if showOCRDebug {
@@ -40,7 +47,14 @@ struct RootView: View {
             }
             #endif
         }
+        .overlay {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+                .opacity(blurPrivacy ? 1 : 0)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showInboxBanner)) { _ in
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
             withAnimation(.spring()) { showBanner = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 withAnimation(.easeInOut) { showBanner = false }
@@ -56,6 +70,13 @@ struct RootView: View {
             }
         }
         #endif
+        .onChange(of: scenePhase) { phase in
+            switch phase {
+            case .active: blurPrivacy = false
+            case .inactive, .background: blurPrivacy = true
+            @unknown default: break
+            }
+        }
     }
 }
 
