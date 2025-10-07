@@ -1,34 +1,31 @@
 import SwiftUI
-internal import CoreData
+import SwiftData
 import UIKit
 
 struct NoteListView: View {
-    @Environment(\.managedObjectContext) private var viewContext
-    @State private var editingNoteId: NSManagedObjectID?
+    @Environment(\.modelContext) private var context
+    @State private var editingNoteId: UUID?
     @State private var editedName: String = ""
     @FocusState private var nameFieldFocused: Bool
     @State private var showJarPicker: Bool = false
-    @State private var selectedNoteForJar: Note?
+    @State private var selectedNoteForJar: SwiftNote?
     @State private var showCreateJar: Bool = false
     @State private var newJarName: String = ""
     @State private var newJarIcon: String = ""
     @State private var animateTitle: Bool = false
-    @State private var activeJarId: NSManagedObjectID?
+    @State private var activeJarId: UUID?
 
-    @FetchRequest(entity: Jar.entity(), sortDescriptors: [NSSortDescriptor(key: "sortOrder", ascending: true), NSSortDescriptor(key: "name", ascending: true)])
-    private var jars: FetchedResults<Jar>
+    @Query(sort: \Jar.sortOrder, order: .forward)
+    private var jars: [Jar]
 
-    @FetchRequest(
-        sortDescriptors: [NSSortDescriptor(key: "dateCaptured", ascending: false)],
-        animation: .default)
-    private var notes: FetchedResults<Note>
+    @Query(sort: \SwiftNote.dateCaptured, order: .reverse)
+    private var notes: [SwiftNote]
 
     var body: some View {
-        let filtered: [Note] = filteredNotes()
-        return ZStack(alignment: .top) {
+        let filtered: [SwiftNote] = filteredNotes()
+        return ZStack(alignment: .bottomTrailing) {
             List {
                 Section {
-                    headerTitle
                     jarChipsRow
                     if let favorite = memoryMoment() {
                         MemoryMomentCard(note: favorite)
@@ -37,17 +34,51 @@ struct NoteListView: View {
                 }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
-                ForEach(filtered, id: \.objectID) { note in
-                    noteRowLink(note)
+                ForEach(filtered, id: \.id) { note in
+                    NavigationLink(destination: SwiftNoteDetailView(note: note)) {
+                        NoteCard(
+                            note: note,
+                            isEditing: editingNoteId == note.id,
+                            nameDraft: $editedName,
+                            onStartEdit: { startEditing(note) },
+                            onCommit: { saveEditedName() }
+                        )
+                        .focused($nameFieldFocused)
+                    }
+                    .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                    .swipeActions(edge: .trailing) {
+                        Button {
+                            selectedNoteForJar = note
+                            showJarPicker = true
+                        } label: { Label("Add to Jar", systemImage: "tray.and.arrow.down") }
+                        .tint(.blue)
+                        .accessibilityLabel("Add note to a Jar")
+                    }
+                    .listRowSeparator(.hidden)
+                    .padding(.vertical, 4)
                 }
             }
             .listStyle(.plain)
-            .navigationTitle("Inbox")
-            .refreshable { ImportService.shared.scanForNewScreenshots(context: viewContext) }
+            .navigationTitle("Memories")
+            .refreshable { ImportService.shared.scanForNewScreenshots(context: context) }
 
             if notes.isEmpty {
                 EmptyStateView()
                     .padding(.top, 60)
+            }
+
+            Menu {
+                Button { ImportService.shared.scanForNewScreenshots(context: context) } label: { Label("Import Screenshot", systemImage: "photo.on.rectangle") }
+                Button { if UIPasteboard.general.hasStrings { ClipboardManager.shared.saveClipboardIfAvailable(context: context) } } label: { Label("Paste Clipboard", systemImage: "doc.on.clipboard") }
+                Button { showCreateJar = true } label: { Label("New Jar", systemImage: "tray") }
+            } label: {
+                ZStack {
+                    Circle().fill(Theme.Colors.highlight)
+                        .frame(width: 56, height: 56)
+                        .softShadow()
+                    Image(systemName: "+").foregroundStyle(.white)
+                }
+                .padding()
             }
         }
         .sheet(isPresented: $showJarPicker) {
@@ -55,101 +86,120 @@ struct NoteListView: View {
         }
     }
 
-    private func startEditing(_ note: Note) {
-        editingNoteId = note.objectID
+    private func startEditing(_ note: SwiftNote) {
+        editingNoteId = note.id
         editedName = note.contactName ?? ""
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { nameFieldFocused = true }
     }
 
     private func saveEditedName() {
-        guard let id = editingNoteId, let note = try? viewContext.existingObject(with: id) as? Note else { return }
-        viewContext.perform {
-            note.contactName = editedName.isEmpty ? nil : editedName
-            note.userEditedContactName = true
-            try? viewContext.save()
-        }
+        guard let id = editingNoteId, let note = notes.first(where: { $0.id == id }) else { return }
+        note.contactName = editedName.isEmpty ? nil : editedName
+        note.userEditedContactName = true
+        try? context.save()
         editingNoteId = nil
     }
 
-    private func memoryMoment() -> Note? {
+    private func memoryMoment() -> SwiftNote? {
         notes.first(where: { $0.isFavorite })
     }
 }
 
-private struct NoteRow: View {
-    let note: Note
+private struct NoteCard: View {
+    @Environment(\.wkTheme) var theme
+    let note: SwiftNote
     let isEditing: Bool
     @Binding var nameDraft: String
     let onStartEdit: () -> Void
     let onCommit: () -> Void
     @State private var pulse: Bool = false
+    @State private var glowAnimation = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             if note.captureMode != CaptureMode.clipboard.rawValue {
                 if let data = note.thumbnail, let ui = UIImage(data: data) {
                     Image(uiImage: ui)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: 56, height: 56)
+                        .frame(width: 40, height: 40)
                         .clipped()
-                        .cornerRadius(12)
+                        .cornerRadius(6)
                 } else {
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: 6)
                         .fill(Color.gray.opacity(0.15))
-                        .frame(width: 56, height: 56)
+                        .frame(width: 40, height: 40)
                         .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
                 }
             }
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    if isEditing {
-                        TextField("Unnamed", text: $nameDraft, onCommit: onCommit)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 240)
-                    } else {
-                        Text(note.contactName ?? "Unnamed")
-                            .font(.headline)
-                            .lineLimit(1)
-                    }
-                    Button(action: { isEditing ? onCommit() : onStartEdit() }) { Image(systemName: isEditing ? "checkmark" : "pencil").font(.subheadline) }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(isEditing ? "Save name" : "Edit name")
-                }
-                Text(note.text ?? "[pending OCR]")
-                    .lineLimit(1)
-                    .foregroundStyle(.primary)
-                if let dc = note.dateCaptured { Text(dc, formatter: Self.dateFormatter).font(.caption).foregroundStyle(.secondary) }
-                if let set = note.jars as? Set<Jar>, !set.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(Array(set).sorted { $0.sortOrder < $1.sortOrder }) { jar in
-                                HStack(spacing: 4) {
-                                    JarIcon(size: 14)
-                                    Text((jar.icon ?? "") + " " + (jar.name ?? ""))
-                                }
-                                    .font(.caption)
-                                    .chipStyle()
-                            }
+            
+            VStack(alignment: .leading, spacing: 2) {
+                // Show message content instead of "Unnamed"
+                let messageText = getMessagePreview()
+                Text(messageText)
+                    .font(.subheadline)
+                    .lineLimit(2)
+                    .foregroundStyle(theme.ink)
+                
+                // Show categories if assigned
+                if !note.jars.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(note.jars.prefix(2), id: \.id) { jar in
+                            Text(jar.name)
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(theme.accent.opacity(0.2))
+                                )
+                                .foregroundStyle(theme.accent)
+                        }
+                        if note.jars.count > 2 {
+                            Text("+\(note.jars.count - 2)")
+                                .font(.caption2)
+                                .foregroundStyle(theme.faintInk)
                         }
                     }
+                } else {
+                    Text("Unassigned")
+                        .font(.caption2)
+                        .foregroundStyle(theme.faintInk)
+                        .italic()
                 }
+                
+                Text(note.dateCaptured, formatter: Self.dateFormatter)
+                    .font(.caption2)
+                    .foregroundStyle(theme.faintInk)
             }
         }
-        .padding(12)
-        .cardStyle()
-        .scaleEffect(pulse ? 1.03 : 1.0)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.surface)
+                .shadow(color: WKTok.shadowSoft, radius: 4, y: 2)
+        )
         .onReceive(NotificationCenter.default.publisher(for: .jarAddedPing)) { notif in
-            guard let id = notif.object as? NSManagedObjectID, id == note.objectID else { return }
-            withAnimation(.easeInOut(duration: 0.2)) {
-                pulse = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                withAnimation {
-                    pulse = false
-                }
-            }
+            guard let id = notif.object as? UUID, id == note.id else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { pulse = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { withAnimation { pulse = false } }
         }
+    }
+    
+    private func getMessagePreview() -> String {
+        // Get the first message block content
+        if let firstBlock = note.messageBlocks.first, !firstBlock.attributed.string.isEmpty {
+            return firstBlock.attributed.string
+        }
+        
+        // Fallback to legacy text field
+        if !note.text.isEmpty {
+            return note.text
+        }
+        
+        // Show placeholder for empty notes
+        return "[Tap to add text]"
     }
 
     private static let dateFormatter: DateFormatter = {
@@ -161,34 +211,16 @@ private struct NoteRow: View {
 }
 
 private extension NoteListView {
-    var headerTitle: some View {
-        HStack {
-            Text("Wishkeep ✨")
-                .largeTitle()
-                .scaleEffect(animateTitle ? 1.02 : 1.0)
-                .opacity(animateTitle ? 1 : 0.9)
-                .onAppear {
-                    withAnimation(.easeInOut(duration: 0.18).repeatForever(autoreverses: true)) {
-                        animateTitle.toggle()
-                    }
-                }
-            Spacer()
-        }
-        .padding(.horizontal, Theme.Metrics.padding)
-        .padding(.top, 8)
-    }
+    var headerTitle: some View { EmptyView() }
 
     var jarChipsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                Button(action: { activeJarId = nil }) {
-                    Text("All")
-                        .chipStyle(active: activeJarId == nil)
-                }
+                Button(action: { activeJarId = nil }) { Text("All").chipStyle(active: activeJarId == nil) }
                 ForEach(jars) { jar in
-                    let active = activeJarId == jar.objectID
-                    Button(action: { activeJarId = active ? nil : jar.objectID }) {
-                        Text((jar.icon ?? "") + " " + (jar.name ?? ""))
+                    let active = activeJarId == jar.id
+                    Button(action: { activeJarId = active ? nil : jar.id }) {
+                        Text((jar.icon ?? "") + " " + jar.name)
                             .chipStyle(active: active)
                     }
                 }
@@ -197,37 +229,14 @@ private extension NoteListView {
         }
     }
 
-    func filteredNotes() -> [Note] {
+    func filteredNotes() -> [SwiftNote] {
         let base = Array(notes)
-        guard let id = activeJarId, let jar = jars.first(where: { $0.objectID == id }) else { return base }
-        return base.filter { ($0.jars as? Set<Jar>)?.contains(jar) ?? false }
-    }
-
-    @ViewBuilder
-    func noteRowLink(_ note: Note) -> some View {
-        NavigationLink(destination: NoteDetailView(note: note)) {
-            NoteRow(
-                note: note,
-                isEditing: editingNoteId == note.objectID,
-                nameDraft: $editedName,
-                onStartEdit: { startEditing(note) },
-                onCommit: { saveEditedName() }
-            )
-            .focused($nameFieldFocused)
-        }
-        .swipeActions(edge: .trailing) {
-            Button {
-                selectedNoteForJar = note
-                showJarPicker = true
-            } label: { Label("Add to Jar", systemImage: "tray.and.arrow.down") }
-            .tint(.blue)
-        }
-        .listRowSeparator(.hidden)
-        .padding(.vertical, 4)
+        guard let id = activeJarId, let jar = jars.first(where: { $0.id == id }) else { return base }
+        return base.filter { $0.jars.contains(jar) }
     }
 
     struct MemoryMomentCard: View {
-        let note: Note
+        let note: SwiftNote
         var body: some View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Favorite")
@@ -235,7 +244,7 @@ private extension NoteListView {
                     .foregroundStyle(.white)
                 Text(note.contactName ?? "")
                     .foregroundStyle(.white.opacity(0.95))
-                Text(note.text ?? "")
+                Text(note.text)
                     .lineLimit(2)
                     .foregroundStyle(.white.opacity(0.95))
             }

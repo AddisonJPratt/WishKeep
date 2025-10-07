@@ -1,63 +1,49 @@
 import Foundation
-internal import CoreData
+import SwiftData
 
 final class JarStore {
     static let shared = JarStore()
     private init() {}
 
-    func create(name: String, icon: String? = nil, colorHex: String? = nil, context: NSManagedObjectContext) throws -> Jar {
+    func create(name: String, icon: String? = nil, colorHex: String? = nil, context: ModelContext) throws -> Jar {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw NSError(domain: "JarStore", code: 1, userInfo: [NSLocalizedDescriptionKey: "Name required"]) }
 
-        // uniqueness check (case-insensitive)
-        let fetch: NSFetchRequest<Jar> = Jar.fetchRequest()
-        fetch.predicate = NSPredicate(format: "(name =[c] %@)", trimmed)
-        if let existing = try? context.fetch(fetch), existing.count > 0 {
-            throw NSError(domain: "JarStore", code: 2, userInfo: [NSLocalizedDescriptionKey: "Duplicate name"]) }
-
-        let jar = Jar(context: context)
-        jar.id = UUID()
-        jar.name = trimmed
-        jar.icon = icon
-        jar.colorHex = colorHex
-        jar.createdAt = Date()
+        // Create new jar
+        let jar = Jar(name: trimmed, icon: icon, colorHex: colorHex)
         jar.sortOrder = (try? maxSortOrder(context)) ?? 0 + 1
+        context.insert(jar)
         try context.save()
         return jar
     }
 
-    func rename(_ jar: Jar, to name: String, context: NSManagedObjectContext) throws {
+    func rename(_ jar: Jar, to name: String, context: ModelContext) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw NSError(domain: "JarStore", code: 1, userInfo: [NSLocalizedDescriptionKey: "Name required"]) }
-        let fetch: NSFetchRequest<Jar> = Jar.fetchRequest()
-        fetch.predicate = NSPredicate(format: "(name =[c] %@) AND self != %@", trimmed, jar)
-        if let dup = try? context.fetch(fetch), dup.count > 0 { throw NSError(domain: "JarStore", code: 2, userInfo: [NSLocalizedDescriptionKey: "Duplicate name"]) }
+        
         jar.name = trimmed
         try context.save()
     }
 
-    func add(_ note: Note, to jar: Jar, context: NSManagedObjectContext) {
-        jar.addToNotes(note)
-        try? context.save()
-        NotificationCenter.default.post(name: .jarAddedPing, object: note.objectID)
-    }
-
-    func remove(_ note: Note, from jar: Jar, context: NSManagedObjectContext) {
-        jar.removeFromNotes(note)
+    func add(_ note: SwiftNote, to jar: Jar, context: ModelContext) {
+        jar.notes.append(note)
         try? context.save()
     }
 
-    func reorder(_ jars: [Jar], context: NSManagedObjectContext) {
+    func remove(_ note: SwiftNote, from jar: Jar, context: ModelContext) {
+        jar.notes.removeAll { $0.id == note.id }
+        try? context.save()
+    }
+
+    func reorder(_ jars: [Jar], context: ModelContext) {
         for (idx, jar) in jars.enumerated() { jar.sortOrder = Int16(idx) }
         try? context.save()
     }
 
-    private func maxSortOrder(_ context: NSManagedObjectContext) throws -> Int16 {
-        let fetch: NSFetchRequest<Jar> = Jar.fetchRequest()
-        fetch.sortDescriptors = [NSSortDescriptor(key: "sortOrder", ascending: false)]
-        fetch.fetchLimit = 1
-        if let top = try context.fetch(fetch).first { return top.sortOrder }
-        return 0
+    private func maxSortOrder(_ context: ModelContext) throws -> Int16 {
+        var descriptor = FetchDescriptor<Jar>(sortBy: [SortDescriptor(\.sortOrder, order: .reverse)])
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).first?.sortOrder ?? 0
     }
 }
 
@@ -65,8 +51,6 @@ extension Notification.Name {
     static let jarAddedPing = Notification.Name("JarAddedPing")
 }
 
-extension Note {
-    var isUnsorted: Bool { (self.jars as? Set<Jar>)?.isEmpty ?? true }
+extension SwiftNote {
+    var isUnsorted: Bool { self.jars.isEmpty }
 }
-
-

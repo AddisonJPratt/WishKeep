@@ -1,7 +1,8 @@
 import Foundation
 import Photos
-internal import CoreData
+import SwiftData
 import UIKit
+import CryptoKit
 
 final class ImportService: NSObject {
     static let shared = ImportService()
@@ -12,7 +13,7 @@ final class ImportService: NSObject {
 
     private override init() { }
 
-    func startIfNeeded(context: NSManagedObjectContext) {
+    func startIfNeeded(context: ModelContext) {
         requestPhotosIfNeeded { [weak self] granted in
             guard granted else { return }
             self?.resolveScreenshotsCollection()
@@ -21,7 +22,7 @@ final class ImportService: NSObject {
         }
     }
 
-    func scanForNewScreenshots(context: NSManagedObjectContext, completion: (() -> Void)? = nil) {
+    func scanForNewScreenshots(context: ModelContext, completion: (() -> Void)? = nil) {
         guard let collection = screenshotsCollection ?? resolveScreenshotsCollection() else {
             completion?(); return
         }
@@ -93,51 +94,37 @@ final class ImportService: NSObject {
         isObserving = true
     }
 
-    private func importAsset(asset: PHAsset, context: NSManagedObjectContext) {
-        // Dedupe by imageLocalIdentifier
-        let fetch: NSFetchRequest<NSFetchRequestResult> = NSFetchRequest(entityName: "Note")
-        fetch.fetchLimit = 1
-        fetch.predicate = NSPredicate(format: "imageLocalIdentifier == %@", asset.localIdentifier)
-        if let count = (try? context.count(for: fetch)), count > 0 {
-            return
-        }
-
-        context.perform {
-            guard let entity = NSEntityDescription.entity(forEntityName: "Note", in: context) else { return }
-            let note = NSManagedObject(entity: entity, insertInto: context)
-            note.setValue(UUID(), forKey: "id")
-            note.setValue(asset.localIdentifier, forKey: "imageLocalIdentifier")
-            note.setValue(asset.creationDate ?? Date(), forKey: "dateCaptured")
-            note.setValue(Date(), forKey: "dateImported")
-            note.setValue("[pending OCR]", forKey: "text")
-            note.setValue(Date(), forKey: "createdAt")
-            note.setValue(asset.localIdentifier, forKey: "coverImageLocalIdentifier")
-            note.setValue(CaptureMode.screenshots.rawValue, forKey: "captureMode")
-            // Grouping: assign threadGroupId if another note in the last 90s exists
-            if let dc = asset.creationDate {
-                let windowStart = dc.addingTimeInterval(-AppConstants.groupingWindowSeconds)
-                let fetch: NSFetchRequest<Note> = Note.fetchRequest()
-                fetch.predicate = NSPredicate(format: "dateCaptured >= %@ AND dateCaptured <= %@", windowStart as NSDate, dc as NSDate)
-                fetch.sortDescriptors = [NSSortDescriptor(key: "dateCaptured", ascending: false)]
-                if let recent = try? context.fetch(fetch), let neighbor = recent.first, let group = neighbor.threadGroupId, !group.isEmpty {
-                    note.setValue(group, forKey: "threadGroupId")
-                } else {
-                    note.setValue(UUID().uuidString, forKey: "threadGroupId")
-                }
-            }
-            // Save immediately so the list updates, then fetch thumbnail asynchronously
-            do { try context.save() } catch { }
+    private func importAsset(asset: PHAsset, context: ModelContext) {
+        // Create new SwiftData note
+        let note = SwiftNote(
+            title: "Screenshot",
+            text: "", // Empty - user will paste text
+            captureMode: CaptureMode.screenshots.rawValue,
+            createdAt: asset.creationDate ?? Date()
+        )
+        
+        note.imageLocalIdentifier = asset.localIdentifier
+        note.coverImageLocalIdentifier = asset.localIdentifier
+        note.dateCaptured = asset.creationDate ?? Date()
+        note.dateImported = Date()
+        
+        context.insert(note)
+        
+        // Save immediately so the list updates, then fetch thumbnail asynchronously
+        do { 
+            try context.save() 
+            
             self.generateThumbnail(for: asset) { data in
-                context.perform {
-                    if let data { note.setValue(data, forKey: "thumbnail") }
+                if let data { 
+                    note.thumbnail = data
                     try? context.save()
                 }
             }
-            if let objectID = note.objectID as NSManagedObjectID? {
-                OCRService.shared.enqueue(noteObjectID: objectID, assetLocalIdentifier: asset.localIdentifier, context: context)
-            }
+            // OCR removed - user will paste text manually
             self.showSavedBanner()
-            print("[Import] Inserted screenshot note id=\((note.value(forKey: "id") as? UUID)?.uuidString ?? "?") at \(String(describing: note.value(forKey: "dateCaptured")))")
+            print("[Import] Inserted screenshot note id=\(note.id.uuidString) at \(note.dateCaptured)")
+        } catch { 
+            print("Failed to save screenshot note: \(error)")
         }
     }
 
@@ -159,52 +146,45 @@ final class ImportService: NSObject {
     private func showSavedBanner() {
         NotificationCenter.default.post(name: .showInboxBanner, object: nil)
     }
+    
+    func computeTextHash(_ text: String) -> String {
+        let lower = text.lowercased()
+        let nfkd = lower.applyingTransform(.toUnicodeName, reverse: false) ?? lower
+        let stripped = nfkd.replacingOccurrences(of: "\\s+", with: "", options: .regularExpression)
+        let data = Data(stripped.utf8)
+        let digest = SHA256.hash(data: data)
+        return digest.compactMap { String(format: "%02x", $0) }.joined()
+    }
 
     // MARK: - Clipboard Merge/Create
 
-    func mergeOrCreate(fromClipboard text: String, context: NSManagedObjectContext) {
+    func mergeOrCreate(fromClipboard text: String, context: ModelContext) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let tenMinAgo = Date().addingTimeInterval(-600)
-        let fetch: NSFetchRequest<Note> = Note.fetchRequest()
-        fetch.predicate = NSPredicate(format: "dateCaptured >= %@", tenMinAgo as NSDate)
-        fetch.sortDescriptors = [NSSortDescriptor(key: "dateCaptured", ascending: false)]
-        let recent = (try? context.fetch(fetch)) ?? []
-
-        switch CapturePolicy.decideOnClipboardSave(text: trimmed, recentScreenshots: recent) {
-        case .createNew(let mode):
-            context.perform {
-                guard let entity = NSEntityDescription.entity(forEntityName: "Note", in: context) else { return }
-                let note = NSManagedObject(entity: entity, insertInto: context) as! Note
-                note.id = UUID()
-                note.text = trimmed
-                note.textHash = OCRService.shared.computeTextHash(trimmed)
-                note.dateCaptured = Date()
-                note.dateImported = Date()
-                note.createdAt = Date()
-                note.captureMode = mode.rawValue
-                note.isLongMessage = trimmed.count > 400
-                note.threadGroupId = UUID().uuidString
-                try? context.save()
-                print("[Clipboard] Created new note")
-                self.showSavedBanner()
-            }
-        case .mergeIntoScreenshot(let screenshotId, let mode):
-            context.perform {
-                let fetch: NSFetchRequest<Note> = Note.fetchRequest()
-                fetch.fetchLimit = 1
-                fetch.predicate = NSPredicate(format: "id == %@", screenshotId as CVarArg)
-                guard let target = try? context.fetch(fetch).first else { return }
-                target.text = trimmed
-                target.textHash = OCRService.shared.computeTextHash(trimmed)
-                target.captureMode = mode.rawValue
-                target.isTruncated = false
-                target.isLongMessage = trimmed.count > 400
-                try? context.save()
-                print("[Clipboard] Merged into screenshot note: \(screenshotId)")
-                self.showSavedBanner()
-            }
+        // Create a new SwiftData note
+        let note = SwiftNote(
+            title: "Clipboard Note",
+            text: trimmed,
+            captureMode: "clipboard",
+            createdAt: Date()
+        )
+        
+        note.textHash = self.computeTextHash(trimmed)
+        note.isLongMessage = trimmed.count > 400
+        note.isTruncated = false
+        note.userEditedContactName = false
+        note.imageLocalIdentifier = ""
+        note.threadGroupId = UUID().uuidString
+        
+        context.insert(note)
+        
+        do {
+            try context.save()
+            print("[Clipboard] Created new note")
+            self.showSavedBanner()
+        } catch {
+            print("Failed to save clipboard note: \(error)")
         }
     }
 }

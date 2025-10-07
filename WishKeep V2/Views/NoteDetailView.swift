@@ -1,11 +1,11 @@
 import SwiftUI
 import UIKit
 import PhotosUI
-internal import CoreData
+import SwiftData
 
 struct NoteDetailView: View {
-    @Environment(\.managedObjectContext) private var viewContext
-    @State private var selectedTab: Int = 1 // 0=Bubbles,1=Transcript,2=Reflection
+    @Environment(\.modelContext) private var context
+    @State private var selectedTab: Int = 1 // 0=Bubbles,1=Transcript,2=Reflection,3=BlockEditor
     @State private var editingName: Bool = false
     @State private var nameDraft: String = ""
     @State private var isEditingTranscript: Bool = false
@@ -16,20 +16,36 @@ struct NoteDetailView: View {
     @State private var reflectPulse: Bool = false
     @State private var showPhotoPicker: Bool = false
     @State private var pickerItem: PhotosPickerItem?
-    let note: Note
+    @State private var showingFormatSheet: Bool = false
+    @FocusState private var transcriptFocused: Bool
+    @State private var isEditingReflection: Bool = false
+    @FocusState private var reflectionFocused: Bool
+    let note: SwiftNote
 
     var body: some View {
         VStack(spacing: 0) {
             header
             contentTabs
         }
+        .safeAreaInset(edge: .bottom) { bottomActionBar }
+        .background(Theme.Colors.canvas.ignoresSafeArea())
         .sheet(isPresented: $showingJarPicker) { JarPickerView(note: note) }
+        .sheet(isPresented: $showingFormatSheet) {
+            TextFormatMenu(
+                onBody: { transcriptDraft = RichTextModel(text: transcriptDraft).applyReturning { $0.applyBody() } },
+                onTitle: { transcriptDraft = RichTextModel(text: transcriptDraft).applyReturning { $0.applyTitle() } },
+                onSubtitle: { transcriptDraft = RichTextModel(text: transcriptDraft).applyReturning { $0.applySubtitle() } },
+                onList: { transcriptDraft = RichTextModel(text: transcriptDraft).applyReturning { $0.toggleList() } },
+                onIndent: { transcriptDraft = RichTextModel(text: transcriptDraft).applyReturning { $0.indent() } }
+            )
+            .presentationDetents([.medium])
+        }
         .onChange(of: pickerItem) { newItem in
             guard let item = newItem else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
                     note.thumbnail = image.jpegData(compressionQuality: 0.8)
-                    try? viewContext.save()
+                    try? context.save()
                 }
             }
         }
@@ -47,8 +63,23 @@ struct NoteDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if selectedTab == 1 {
                     Button(isEditingTranscript ? "Done" : "Edit") {
-                        if isEditingTranscript { saveTranscript() }
-                        isEditingTranscript.toggle()
+                        if isEditingTranscript {
+                            saveTranscript()
+                            transcriptFocused = false
+                        } else {
+                            isEditingTranscript = true
+                            transcriptFocused = true
+                        }
+                    }
+                } else if selectedTab == 2 {
+                    Button(isEditingReflection ? "Done" : "Edit") {
+                        if isEditingReflection {
+                            reflectionFocused = false
+                            isEditingReflection = false
+                        } else {
+                            isEditingReflection = true
+                            reflectionFocused = true
+                        }
                     }
                 }
             }
@@ -72,14 +103,13 @@ struct NoteDetailView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(note.contactName ?? "Unnamed")
-                    .font(.title2).bold()
+                Text(note.contactName ?? "Unnamed").titleStyle(.h2)
                 Button { editingName = true } label: { Image(systemName: "pencil") }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Edit name")
                 Spacer()
             }
-            // Jars chips + Add Image
+            // Jars chips
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     if let set = note.jars as? Set<Jar> {
@@ -91,7 +121,7 @@ struct NoteDetailView: View {
                             .padding(.vertical, 6)
                             .background(Capsule().fill(Color(.secondarySystemBackground)))
                             .contextMenu {
-                                Button(role: .destructive) { JarStore.shared.remove(note, from: jar, context: viewContext) } label: { Label("Remove", systemImage: "xmark") }
+                                Button(role: .destructive) { JarStore.shared.remove(note, from: jar, context: context) } label: { Label("Remove", systemImage: "xmark") }
                             }
                         }
                     }
@@ -99,69 +129,17 @@ struct NoteDetailView: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(Capsule().fill(Color(.tertiarySystemBackground)))
-                    PhotosPicker(selection: $pickerItem, matching: .images, photoLibrary: .shared()) {
-                        Label("Add Image", systemImage: "photo.badge.plus")
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(Color(.tertiarySystemBackground)))
-                    }
                 }
                 .padding(.vertical, 4)
             }
-            ZStack {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Theme.Colors.card)
-                    .frame(height: 160)
-                if let data = note.thumbnail, let ui = UIImage(data: data) {
-                    // blurred background
-                    Image(uiImage: ui)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(height: 160)
-                        .blur(radius: 18)
-                        .opacity(0.5)
-                        .clipped()
-                        .cornerRadius(16)
-                    // main image with fade-in
-                    Image(uiImage: ui)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 120)
-                        .cornerRadius(12)
-                        .opacity(coverVisible ? 1 : 0)
-                        .animation(.easeInOut(duration: 0.25), value: coverVisible)
-                } else {
-                    Image(systemName: "photo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(height: 80)
-                        .foregroundStyle(.secondary)
-                        .opacity(coverVisible ? 1 : 0)
-                        .animation(.easeInOut(duration: 0.25), value: coverVisible)
-                }
-            }
-            .accessibilityLabel("Cover screenshot")
-            .padding(.bottom, 8)
-            .onAppear { coverVisible = true }
+            // No cover image block; focus on text content
         }
         .padding(.horizontal)
-        .padding(.top)
+        .padding(.top, 32)
     }
 
     private var contentTabs: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker("View", selection: $selectedTab) {
-                if !isClipboard { Text("Bubbles").tag(0) }
-                Text("Transcript").tag(1)
-                Text("Reflection").tag(2)
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .onChange(of: selectedTab) { newValue in
-                withAnimation(.easeInOut(duration: 0.2)) { }
-                savePreferredMode(tab: newValue)
-            }
-
             Group { selectedContent }
                 .transition(.opacity)
         }
@@ -172,7 +150,8 @@ struct NoteDetailView: View {
         case 0:
             if isClipboard { transcriptView } else { BubblesView(text: note.text ?? "") }
         case 1: transcriptView
-        default: reflectionView
+        case 2: reflectionView
+        default: blockEditorView
         }
     }
 
@@ -197,6 +176,7 @@ struct NoteDetailView: View {
                         .padding()
                         .frame(maxWidth: .infinity)
                         .textInputAutocapitalization(.sentences)
+                        .focused($transcriptFocused)
                 } else {
                     Text(note.text ?? "")
                         .textSelection(.enabled)
@@ -206,6 +186,21 @@ struct NoteDetailView: View {
                         .lineSpacing(6)
                         .font(.body)
                 }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isEditingTranscript && transcriptFocused {
+                RichTextToolbar(
+                    state: .constant(.init()),
+                    onBody: { transcriptDraft = RichTextModel(text: transcriptDraft).applyReturning { $0.applyBody() } },
+                    onTitle: { transcriptDraft = RichTextModel(text: transcriptDraft).applyReturning { $0.applyTitle() } },
+                    onSubtitle: { transcriptDraft = RichTextModel(text: transcriptDraft).applyReturning { $0.applySubtitle() } },
+                    onList: { transcriptDraft = RichTextModel(text: transcriptDraft).applyReturning { $0.toggleList() } },
+                    onIndent: { transcriptDraft = RichTextModel(text: transcriptDraft).applyReturning { $0.indent() } },
+                    onMore: { showingFormatSheet = true }
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
             }
         }
         .overlay(alignment: .bottomLeading) {
@@ -223,11 +218,12 @@ struct NoteDetailView: View {
         ZStack(alignment: .trailing) {
             TextEditor(text: Binding(get: { note.reflection ?? "" }, set: { newValue in
                 note.reflection = newValue
-                try? viewContext.save()
+                try? context.save()
                 reflectPulse = true
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { reflectPulse = false }
             }))
             .padding()
+            .focused($reflectionFocused)
             if reflectPulse {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
@@ -236,11 +232,115 @@ struct NoteDetailView: View {
                     .animation(.easeInOut(duration: 0.2), value: reflectPulse)
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if isEditingReflection && reflectionFocused {
+                RichTextToolbar(
+                    state: .constant(.init()),
+                    onBody: {
+                        let new = RichTextModel(text: note.reflection ?? "").applyReturning { $0.applyBody() }
+                        note.reflection = new; try? context.save()
+                    },
+                    onTitle: {
+                        let new = RichTextModel(text: note.reflection ?? "").applyReturning { $0.applyTitle() }
+                        note.reflection = new; try? context.save()
+                    },
+                    onSubtitle: {
+                        let new = RichTextModel(text: note.reflection ?? "").applyReturning { $0.applySubtitle() }
+                        note.reflection = new; try? context.save()
+                    },
+                    onList: {
+                        let new = RichTextModel(text: note.reflection ?? "").applyReturning { $0.toggleList() }
+                        note.reflection = new; try? context.save()
+                    },
+                    onIndent: {
+                        let new = RichTextModel(text: note.reflection ?? "").applyReturning { $0.indent() }
+                        note.reflection = new; try? context.save()
+                    },
+                    onMore: { showingFormatSheet = true }
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+            }
+        }
     }
+    
+    private var blockEditorView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                Text("Message")
+                    .font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                
+                // For now, we'll create a simple text editor that can be enhanced later
+                // This is a placeholder until we fully integrate the block-based system
+                TextEditor(text: Binding(
+                    get: { note.text ?? "" },
+                    set: { newValue in
+                        note.text = newValue
+                        try? context.save()
+                    }
+                ))
+                .frame(minHeight: 200)
+                .padding()
+                .background(Color(.systemBackground))
+                .cornerRadius(8)
+                .accessibilityLabel("Message content")
+                
+                Text("Reflection")
+                    .font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                
+                TextEditor(text: Binding(
+                    get: { note.reflection ?? "" },
+                    set: { newValue in
+                        note.reflection = newValue
+                        try? context.save()
+                    }
+                ))
+                .frame(minHeight: 150)
+                .padding()
+                .background(Color(.systemBackground))
+                .cornerRadius(8)
+                .accessibilityLabel("Reflection content")
+            }
+            .padding(20)
+        }
+    }
+
+    // MARK: - Bottom Action Bar
+    private var bottomActionBar: some View {
+        HStack { 
+            Picker("View", selection: $selectedTab) {
+                if !isClipboard { Text("Bubbles").tag(0) }
+                Text("Transcript").tag(1)
+                Text("Reflection").tag(2)
+                Text("Editor").tag(3)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: selectedTab) { newValue in
+                withAnimation(.easeInOut(duration: 0.2)) { }
+                savePreferredMode(tab: newValue)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+        .overlay(Divider().background(Theme.Colors.divider), alignment: .top)
+        .accessibilityLabel("View selector")
+    }
+
+    private func shareNote() {
+        let text = note.text ?? ""
+        let av = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        UIApplication.shared.windows.first?.rootViewController?.present(av, animated: true)
+    }
+
 
     private func toggleFavorite() {
         note.isFavorite.toggle()
-        try? viewContext.save()
+        try? context.save()
+        Haptic.light()
         starBounce = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { starBounce = false }
     }
@@ -248,16 +348,16 @@ struct NoteDetailView: View {
     private func saveName() {
         note.contactName = nameDraft.isEmpty ? nil : nameDraft
         note.userEditedContactName = true
-        try? viewContext.save()
+        try? context.save()
         editingName = false
     }
 
     private func saveTranscript() {
         let newText = transcriptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         note.text = newText
-        note.textHash = OCRService.shared.computeTextHash(newText)
+        note.textHash = ImportService.shared.computeTextHash(newText)
         note.isTruncated = false
-        try? viewContext.save()
+        try? context.save()
     }
 
     private static let dateFormatter: DateFormatter = {
@@ -274,7 +374,7 @@ struct NoteDetailView: View {
     private func savePreferredMode(tab: Int) {
         let mode = (tab == 0 && !isClipboard) ? "bubbles" : (tab == 2 ? "reflection" : "transcript")
         note.userPreferredMode = mode
-        try? viewContext.save()
+        try? context.save()
     }
 }
 

@@ -1,13 +1,10 @@
 import SwiftUI
-internal import CoreData
+import SwiftData
 
 struct JarsView: View {
-    @Environment(\.managedObjectContext) private var viewContext
-    @FetchRequest(entity: Jar.entity(), sortDescriptors: [NSSortDescriptor(key: "sortOrder", ascending: true), NSSortDescriptor(key: "name", ascending: true)])
-    private var jars: FetchedResults<Jar>
-
-    @FetchRequest(entity: Note.entity(), sortDescriptors: [NSSortDescriptor(keyPath: \Note.dateCaptured, ascending: false)])
-    private var allNotes: FetchedResults<Note>
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: [SortDescriptor(\Jar.sortOrder, order: .forward), SortDescriptor(\Jar.name, order: .forward)]) private var jars: [Jar]
+    @Query(sort: [SortDescriptor(\SwiftNote.createdAt, order: .reverse)]) private var allNotes: [SwiftNote]
 
     @State private var showingCreate: Bool = false
     @State private var newName: String = ""
@@ -20,7 +17,7 @@ struct JarsView: View {
                     HStack { Label("All", systemImage: "tray.full"); Spacer(); Text("\(allNotes.count)") }
                 }
                 NavigationLink(destination: JarNotesView(selectedJar: nil, filter: .inbox)) {
-                    HStack { Label("Inbox (Unsorted)", systemImage: "tray"); Spacer(); Text("\(unsortedCount())") }
+                    HStack { Label("Unsorted Memories", systemImage: "tray"); Spacer(); Text("\(unsortedCount())") }
                 }
             }
             Section("Your Jars") {
@@ -30,7 +27,7 @@ struct JarsView: View {
                             if let imgName = "Icon_Jar" as String? { JarIcon(size: 18) }
                             Text((jar.icon ?? "") + " " + (jar.name ?? ""))
                             Spacer()
-                            Text("\(((jar.notes as? Set<Note>)?.count ?? 0))")
+                            Text("\(jar.notes.count)")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -46,18 +43,18 @@ struct JarsView: View {
     }
 
     private func unsortedCount() -> Int {
-        allNotes.filter { ($0.jars as? Set<Jar>)?.isEmpty ?? true }.count
+        allNotes.filter { $0.jars.isEmpty }.count
     }
 
     private func delete(at offsets: IndexSet) {
-        for idx in offsets { viewContext.delete(jars[idx]) }
-        try? viewContext.save()
+        for idx in offsets { modelContext.delete(jars[idx]) }
+        try? modelContext.save()
     }
 
     private func move(from source: IndexSet, to destination: Int) {
-        var array = Array(jars)
+        var array = jars
         array.move(fromOffsets: source, toOffset: destination)
-        JarStore.shared.reorder(array, context: viewContext)
+        JarStore.shared.reorder(array, context: modelContext)
     }
 
     private var createSheet: some View {
@@ -70,7 +67,7 @@ struct JarsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        do { _ = try JarStore.shared.create(name: newName, icon: newIcon.isEmpty ? nil : newIcon, colorHex: nil, context: viewContext); showingCreate = false; newName = ""; newIcon = "" } catch { }
+                        do { _ = try JarStore.shared.create(name: newName, icon: newIcon.isEmpty ? nil : newIcon, colorHex: nil, context: modelContext); showingCreate = false; newName = ""; newIcon = "" } catch { }
                     }
                 }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showingCreate = false } }
@@ -82,17 +79,14 @@ struct JarsView: View {
 struct JarNotesView: View {
     enum Filter { case all, inbox, jar(Jar) }
 
-    @Environment(\.managedObjectContext) private var viewContext
-    @FetchRequest(entity: Jar.entity(), sortDescriptors: [NSSortDescriptor(key: "sortOrder", ascending: true), NSSortDescriptor(key: "name", ascending: true)])
-    private var jars: FetchedResults<Jar>
-
-    @FetchRequest(entity: Note.entity(), sortDescriptors: [NSSortDescriptor(keyPath: \Note.dateCaptured, ascending: false)])
-    private var allNotes: FetchedResults<Note>
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: [SortDescriptor(\Jar.sortOrder, order: .forward), SortDescriptor(\Jar.name, order: .forward)]) private var jars: [Jar]
+    @Query(sort: [SortDescriptor(\SwiftNote.createdAt, order: .reverse)]) private var allNotes: [SwiftNote]
 
     var selectedJar: Jar?
     var filter: Filter
     @State private var topFilter: Int = 0 // 0=All,1=Inbox
-    @State private var activeJarId: NSManagedObjectID?
+    @State private var activeJarID: PersistentIdentifier?
 
     var body: some View {
         VStack {
@@ -106,8 +100,8 @@ struct JarNotesView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(jars) { jar in
-                        let isActive = activeJarId == jar.objectID
-                        Button(action: { activeJarId = jar.objectID }) {
+                        let isActive = activeJarID == jar.persistentModelID
+                        Button(action: { activeJarID = jar.persistentModelID }) {
                             Text((jar.icon ?? "") + " " + (jar.name ?? ""))
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
@@ -153,19 +147,17 @@ struct JarNotesView: View {
         switch filter { case .all: return "All"; case .inbox: return "Inbox"; default: return "Notes" }
     }
 
-    private func filteredNotes() -> [Note] {
-        let base = Array(allNotes)
+    private func filteredNotes() -> [SwiftNote] {
+        let base = allNotes
         // top filter
-        let topFiltered = topFilter == 1 ? base.filter { ($0.jars as? Set<Jar>)?.isEmpty ?? true } : base
-        if let id = activeJarId, let jar = jars.first(where: { $0.objectID == id }) {
-            return topFiltered.filter { ($0.jars as? Set<Jar>)?.contains(jar) ?? false }
+        let topFiltered = topFilter == 1 ? base.filter { $0.jars.isEmpty } : base
+        if let id = activeJarID, let jar = jars.first(where: { $0.persistentModelID == id }) {
+            return topFiltered.filter { $0.jars.contains(where: { $0.persistentModelID == jar.persistentModelID }) }
         }
         switch filter {
         case .all: return topFiltered
-        case .inbox: return topFiltered.filter { ($0.jars as? Set<Jar>)?.isEmpty ?? true }
-        case .jar(let j): return topFiltered.filter { ($0.jars as? Set<Jar>)?.contains(j) ?? false }
+        case .inbox: return topFiltered.filter { $0.jars.isEmpty }
+        case .jar(let j): return topFiltered.filter { $0.jars.contains(where: { $0.persistentModelID == j.persistentModelID }) }
         }
     }
 }
-
-

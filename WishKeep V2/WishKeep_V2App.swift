@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-internal import CoreData
+import SwiftData
 
 @main
 struct WishKeep_V2App: App {
@@ -16,7 +16,7 @@ struct WishKeep_V2App: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .modelContainer(persistenceController.container)
         }
     }
 }

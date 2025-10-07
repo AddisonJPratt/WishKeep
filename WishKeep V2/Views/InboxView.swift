@@ -1,14 +1,12 @@
 import SwiftUI
-internal import CoreData
+import SwiftData
 import UIKit
 
 struct InboxView: View {
-    @Environment(\.managedObjectContext) private var viewContext
+    @Environment(\.modelContext) private var context
 
-    @FetchRequest(
-        sortDescriptors: [NSSortDescriptor(keyPath: \Note.dateCaptured, ascending: false)],
-        animation: .default)
-    private var notes: FetchedResults<Note>
+    @Query(sort: \SwiftNote.dateCaptured, order: .reverse)
+    private var notes: [SwiftNote]
 
     var body: some View {
         List {
@@ -35,13 +33,11 @@ struct InboxView: View {
                             }
                         }
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(note.text ?? "")
+                            Text(note.text)
                                 .lineLimit(2)
-                            if let dc = note.dateCaptured {
-                                Text(dc, formatter: Self.dateFormatter)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text(note.dateCaptured, formatter: Self.dateFormatter)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                     .padding(.vertical, 6)
@@ -50,10 +46,10 @@ struct InboxView: View {
         }
         .navigationTitle("Inbox")
         .refreshable {
-            ImportService.shared.scanForNewScreenshots(context: viewContext)
+            ImportService.shared.scanForNewScreenshots(context: context)
         }
         .onAppear {
-            ImportService.shared.startIfNeeded(context: viewContext)
+            ImportService.shared.startIfNeeded(context: context)
         }
     }
 
@@ -68,7 +64,7 @@ struct InboxView: View {
 #Preview {
     NavigationStack {
         InboxView()
-            .environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
+            .modelContainer(PersistenceController.preview.container)
     }
 }
 

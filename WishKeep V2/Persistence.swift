@@ -5,53 +5,59 @@
 //  Created by Addison Pratt on 10/4/25.
 //
 
-internal import CoreData
+import SwiftData
+import SwiftUI
 
 struct PersistenceController {
     static let shared = PersistenceController()
-
+    
     @MainActor
     static let preview: PersistenceController = {
         let result = PersistenceController(inMemory: true)
-        let viewContext = result.container.viewContext
-        for _ in 0..<10 {
-            let newItem = Item(context: viewContext)
-            newItem.timestamp = Date()
-        }
+        let context = result.container.mainContext
+        
+        // Create sample data for preview
+        let sampleNote = SwiftNote(title: "Sample Note")
+        context.insert(sampleNote)
+        
+        // Add some sample blocks
+        let messageBlock = Block(kind: .paragraph, text: NSAttributedString(string: "This is a sample message."), order: 0)
+        let reflectionBlock = Block(kind: .paragraph, text: NSAttributedString(string: "This is a sample reflection."), order: 0)
+        
+        sampleNote.messageBlocks.append(messageBlock)
+        sampleNote.reflectionBlocks.append(reflectionBlock)
+        
         do {
-            try viewContext.save()
+            try context.save()
         } catch {
-            // Replace this implementation with code to handle the error appropriately.
-            // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-            let nsError = error as NSError
-            fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
+            fatalError("Preview data creation failed: \(error)")
         }
+        
         return result
     }()
-
-    let container: NSPersistentContainer
-
+    
+    let container: ModelContainer
+    
     init(inMemory: Bool = false) {
-        container = NSPersistentContainer(name: "WishKeep_V2")
-        if inMemory {
-            container.persistentStoreDescriptions.first!.url = URL(fileURLWithPath: "/dev/null")
+        do {
+            let schema = Schema([
+                SwiftNote.self,
+                Block.self,
+                Jar.self
+            ])
+            
+            let modelConfiguration = ModelConfiguration(
+                schema: schema,
+                isStoredInMemoryOnly: inMemory
+            )
+            
+            container = try ModelContainer(
+                for: schema,
+                configurations: [modelConfiguration]
+            )
+        } catch {
+            fatalError("Could not create ModelContainer: \(error)")
         }
-        container.loadPersistentStores(completionHandler: { (storeDescription, error) in
-            if let error = error as NSError? {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-
-                /*
-                 Typical reasons for an error here include:
-                 * The parent directory does not exist, cannot be created, or disallows writing.
-                 * The persistent store is not accessible, due to permissions or data protection when the device is locked.
-                 * The device is out of space.
-                 * The store could not be migrated to the current model version.
-                 Check the error message to determine what the actual problem was.
-                 */
-                fatalError("Unresolved error \(error), \(error.userInfo)")
-            }
-        })
-        container.viewContext.automaticallyMergesChangesFromParent = true
     }
 }
+

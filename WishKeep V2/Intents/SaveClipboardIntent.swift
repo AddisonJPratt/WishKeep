@@ -1,6 +1,6 @@
 import Foundation
 import AppIntents
-internal import CoreData
+import SwiftData
 
 struct SaveClipboardIntent: AppIntent {
     static var title: LocalizedStringResource = "Save Clipboard to Wishkeep"
@@ -10,7 +10,7 @@ struct SaveClipboardIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         await MainActor.run {
-            let context = PersistenceController.shared.container.viewContext
+            let context = PersistenceController.shared.container.mainContext
             ClipboardManager.shared.saveClipboardIfAvailable(context: context)
         }
         return .result()

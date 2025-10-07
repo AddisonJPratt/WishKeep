@@ -1,5 +1,5 @@
 import UIKit
-internal import CoreData
+import SwiftData
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
     private let saveClipboardShortcutType = "com.wishkeep.saveClipboard"
@@ -12,7 +12,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
         guard shortcutItem.type == saveClipboardShortcutType else { completionHandler(false); return }
-        let context = PersistenceController.shared.container.viewContext
+        let context = PersistenceController.shared.container.mainContext
         ClipboardManager.shared.saveClipboardIfAvailable(context: context)
         completionHandler(true)
     }

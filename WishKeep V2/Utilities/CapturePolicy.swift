@@ -3,7 +3,7 @@ import Foundation
 enum CaptureMode: String { case screenshots, clipboard, mixed }
 
 struct CaptureDecisionInput {
-    let recentScreenshots: [Note]
+    let recentScreenshots: [SwiftNote]
     let clipboardText: String?
     let newScreenshotOCR: String?
 }
@@ -18,7 +18,7 @@ enum CapturePolicy {
         return (.screenshots, ["isTruncated": isTruncated])
     }
 
-    static func decideOnClipboardSave(text: String, recentScreenshots: [Note]) -> DecisionResult {
+    static func decideOnClipboardSave(text: String, recentScreenshots: [SwiftNote]) -> DecisionResult {
         // Choose the screenshot with maximum similarity
         let best = recentScreenshots.max { a, b in
             similarity(a.text ?? "", text) < similarity(b.text ?? "", text)

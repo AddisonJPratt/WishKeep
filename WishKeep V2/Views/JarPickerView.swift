@@ -1,12 +1,12 @@
 import SwiftUI
-internal import CoreData
+import SwiftData
 
 struct JarPickerView: View {
-    @Environment(\.managedObjectContext) private var viewContext
-    @FetchRequest(entity: Jar.entity(), sortDescriptors: [NSSortDescriptor(key: "sortOrder", ascending: true)])
-    private var jars: FetchedResults<Jar>
+    @Environment(\.modelContext) private var context
+    @Query(sort: \Jar.sortOrder, order: .forward)
+    private var jars: [Jar]
 
-    let note: Note
+    let note: SwiftNote
     @Environment(\.dismiss) private var dismiss
     @State private var newName: String = ""
     @State private var newIcon: String = ""
@@ -36,11 +36,11 @@ struct JarPickerView: View {
     }
 
     private func isSelected(_ jar: Jar) -> Bool {
-        (note.jars as? Set<Jar>)?.contains(jar) ?? false
+        note.jars.contains(jar)
     }
     private func toggle(_ jar: Jar) {
-        if isSelected(jar) { JarStore.shared.remove(note, from: jar, context: viewContext) }
-        else { JarStore.shared.add(note, to: jar, context: viewContext) }
+        if isSelected(jar) { JarStore.shared.remove(note, from: jar, context: context) }
+        else { JarStore.shared.add(note, to: jar, context: context) }
     }
 
     private var createSheet: some View {
@@ -70,7 +70,7 @@ struct JarPickerView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         let hex = pickedColor.toHexString()
-                        do { _ = try JarStore.shared.create(name: newName, icon: newIcon.isEmpty ? nil : newIcon, colorHex: hex, context: viewContext); showCreate = false }
+                        do { _ = try JarStore.shared.create(name: newName, icon: newIcon.isEmpty ? nil : newIcon, colorHex: hex, context: context); showCreate = false }
                         catch { }
                     }
                 }
